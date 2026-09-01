@@ -14,8 +14,8 @@ log = logging.getLogger(__name__)
 HERE    = Path(__file__).parent.parent
 OUT_DIR = HERE / "Database"
 
-ROLLEX_SRC  = Path(r"C:\Users\virat.arya\ETG\SoftsDatabase - Documents\Database\Hardmine\Interim_Migration\Rollex\Database")
-FUTURES_SRC = Path(r"C:\Users\virat.arya\ETG\SoftsDatabase - Documents\Database\Hardmine\Interim_Migration\Futures\Database")
+ROLLEX_SRC  = Path(r"C:\Users\virat.arya\ETG\SoftsDatabase - Documents\Database\Hardmine\LSEG\Rollex\Database")
+FUTURES_SRC = Path(r"C:\Users\virat.arya\ETG\SoftsDatabase - Documents\Database\Hardmine\LSEG\Futures\Database")
 
 COMMS = ["KC", "RC", "CC", "LCC", "SB", "CT", "LSU"]
 

@@ -2,7 +2,7 @@
 
 Interim replacement for `ICEBREAKER/VaR`. This project is a pure downstream
 consumer — it holds no ingest logic of its own, only a daily sync step that
-copies parquets from two other Interim_Migration projects. Ported unchanged
+copies parquets from two other LSEG projects. Ported unchanged
 except for repointing that sync's source paths.
 
 ## What's here
@@ -14,8 +14,8 @@ except for repointing that sync's source paths.
   simulation, normal or Student-t fat tails, component CVaR breakdown,
   editable position book saved to `Dashboard/saved_positions.json`).
 - **`Code/ingest.py`** — copies 7 `rollex_{comm}.parquet` files from
-  `Interim_Migration/Rollex/Database` and 7 `{comm}_futures.parquet` files
-  from `Interim_Migration/Futures/Database` into this project's own
+  `LSEG/Rollex/Database` and 7 `{comm}_futures.parquet` files
+  from `LSEG/Futures/Database` into this project's own
   `Database/`, mtime-gated (skips a file if the destination is already newer).
   Both source projects run their own daily automators, so this step is a
   cheap copy, not a rebuild.
