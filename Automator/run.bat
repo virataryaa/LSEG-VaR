@@ -19,7 +19,7 @@ python "%SCRIPT%" >> "%LOG%" 2>&1
 set ERR=!ERRORLEVEL!
 if !ERR! NEQ 0 (
     echo %DATE% %TIME% -- INGEST FAILED >> "%LOG%"
-    python "%MAILER%" FAIL "VaR sync failed — source parquets may be missing. Check run_log.txt."
+    python "%MAILER%" FAIL "VaR sync failed - source parquets may be missing. Check run_log.txt."
     exit /b 1
 )
 echo %DATE% %TIME% -- Ingest complete >> "%LOG%"
@@ -41,7 +41,7 @@ if !ERRORLEVEL! NEQ 0 (
     python "%MAILER%" SUCCESS "VaR database synced and pushed to GitHub."
 ) else (
     echo %DATE% %TIME% -- No changes, skipping commit >> "%LOG%"
-    python "%MAILER%" SUCCESS "VaR sync ran — no parquet changes detected."
+    python "%MAILER%" SUCCESS "VaR sync ran - no parquet changes detected."
 )
 
 echo %DATE% %TIME% -- DONE >> "%LOG%"
