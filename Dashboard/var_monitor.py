@@ -10,7 +10,6 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
-from scipy.stats import t as _t_dist
 
 # ── Data paths ───────────────────────────────────────────────────────────────
 _DB_DIR       = Path(__file__).resolve().parents[1] / "Database"
@@ -90,25 +89,51 @@ st.markdown("""<style>
   [data-testid="stExpander"]{border:1px solid #e8e8ed!important;border-radius:8px!important;background:#fff!important}
   h1,h2,h3{color:#1d1d1f!important;font-weight:500!important}
 
-  /* Compact pill buttons for st.segmented_control (nav + all filters) */
+  /* Compact pill buttons for st.segmented_control (nav + all filters) —
+     force navy accent everywhere; Streamlit's default theme primary
+     (used by BaseWeb's kind=primary on the selected pill) is red. */
   [data-testid="stButtonGroup"]{gap:.3rem!important;flex-wrap:wrap!important}
   [data-testid="stButtonGroup"] button{
     padding:.1rem .65rem!important;
     min-height:1.55rem!important;
     height:auto!important;
     border-radius:999px!important;
-    border-color:#e0e0e6!important;
+    background:#fff!important;
+    border:1px solid #e0e0e6!important;
+    color:#1d1d1f!important;
+    box-shadow:none!important;
   }
   [data-testid="stButtonGroup"] button *{
     font-size:.74rem!important;
     line-height:1.2!important;
+    color:inherit!important;
+    fill:currentColor!important;
   }
-  [data-testid="stButtonGroup"] button[aria-checked="true"]{
+  [data-testid="stButtonGroup"] button:hover,
+  [data-testid="stButtonGroup"] button:focus,
+  [data-testid="stButtonGroup"] button:focus-visible,
+  [data-testid="stButtonGroup"] button:active{
+    background:#eef1f8!important;
+    border-color:#0a2463!important;
+    color:#0a2463!important;
+    outline:none!important;
+    box-shadow:none!important;
+  }
+  [data-testid="stButtonGroup"] button[aria-checked="true"],
+  [data-testid="stButtonGroup"] button[aria-checked="true"]:hover,
+  [data-testid="stButtonGroup"] button[aria-checked="true"]:focus{
     background:#0a2463!important;
     border-color:#0a2463!important;
-  }
-  [data-testid="stButtonGroup"] button[aria-checked="true"] *{
     color:#fff!important;
+  }
+
+  /* Main nav pills — bigger than the in-page filter pills */
+  .st-key-nav_wrapper [data-testid="stButtonGroup"] button{
+    padding:.5rem 1.3rem!important;
+    min-height:2.4rem!important;
+  }
+  .st-key-nav_wrapper [data-testid="stButtonGroup"] button *{
+    font-size:1rem!important;
   }
 </style>""", unsafe_allow_html=True)
 
@@ -240,7 +265,8 @@ default_start = (all_dates.max() - pd.DateOffset(years=5)).date()
 
 # ── Nav ───────────────────────────────────────────────────────────────────────
 NAV_OPTIONS = ["Portfolio VaR — Monte Carlo", "Parametric VaR"]
-nav = seg_control("", NAV_OPTIONS, default=NAV_OPTIONS[0], key="nav_main")
+with st.container(key="nav_wrapper"):
+    nav = seg_control("", NAV_OPTIONS, default="Parametric VaR", key="nav_main")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — VaR Monitor
@@ -539,24 +565,21 @@ to extreme moves. Commodity markets experience sharp dislocations more often tha
 
     # ── VaR / CVaR ────────────────────────────────────────────────────────────
     alpha     = 0.01 if mc_conf == "99%" else 0.05
-    z_para    = 2.3263 if mc_conf == "99%" else 1.6449
     cutoff    = float(np.percentile(sim_pnl, alpha * 100))
     port_var  = max(-cutoff, 0.0)
     tail_mask = sim_pnl <= cutoff
     port_cvar = float(-sim_pnl[tail_mask].mean()) if tail_mask.any() else port_var
 
-    # Individual VaRs must use the same tail assumption as the portfolio MC
-    # (z_para alone would always be normal-tailed, understating "Sum Indiv
-    # VaRs" whenever fat tails are on and overstating the apparent
-    # diversification benefit below).
-    if use_t:
-        z_indiv = abs(float(_t_dist.ppf(alpha, t_df_v))) / np.sqrt(t_df_v / (t_df_v - 2))
-    else:
-        z_indiv = z_para
-
+    # Individual (stand-alone) VaR per commodity, from the SAME simulated
+    # draws as the portfolio VaR above — not a separate analytical z/t
+    # formula. Mixing two methodologies made "Sum Indiv VaRs" and "Portfolio
+    # VaR" disagree by Monte Carlo sampling noise even for a single-position
+    # book, where they must be identical (nothing to diversify against).
+    # Using each asset's own marginal simulated P&L guarantees Portfolio VaR
+    # == Sum Indiv VaRs exactly whenever only one position is live.
     indiv_var = np.array([
-        abs(dollar_exp[i]) * float(data[c][f"vol_{mc_win}"].dropna().iloc[-1]) * z_indiv
-        for i, c in enumerate(comm_order)
+        max(-float(np.percentile(sim_ret[:, i] * dollar_exp[i], alpha * 100)), 0.0)
+        for i in range(len(comm_order))
     ])
     sum_indiv   = float(indiv_var.sum())
     div_benefit = sum_indiv - port_var
