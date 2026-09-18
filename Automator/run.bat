@@ -4,6 +4,7 @@ setlocal enabledelayedexpansion
 set REPO=C:\Users\virat.arya\ETG\SoftsDatabase - Documents\Database\Hardmine\LSEG\VaR
 set LOG=%REPO%\Automator\run_log.txt
 set SCRIPT=%REPO%\Code\ingest.py
+set FXSCRIPT=%REPO%\Code\gbpusd_ingest.py
 set MAILER=%REPO%\Automator\send_mail.py
 
 :: Prevent Git Credential Manager from showing an interactive dialog in unattended runs.
@@ -23,6 +24,15 @@ if !ERR! NEQ 0 (
     exit /b 1
 )
 echo %DATE% %TIME% -- Ingest complete >> "%LOG%"
+
+:: GBP/USD FX update (for LCC currency conversion) — needs LSEG Workspace open.
+:: Non-fatal: if this fails the rest of the sync still proceeds on the last known rate.
+python "%FXSCRIPT%" >> "%LOG%" 2>&1
+if !ERRORLEVEL! NEQ 0 (
+    echo %DATE% %TIME% -- GBPUSD INGEST FAILED - continuing with stale FX rate >> "%LOG%"
+) else (
+    echo %DATE% %TIME% -- GBPUSD ingest complete >> "%LOG%"
+)
 
 :: Git commit and push
 cd /d "%REPO%"

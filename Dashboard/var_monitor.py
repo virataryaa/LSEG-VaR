@@ -10,10 +10,18 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
+from scipy.stats import t as _t_dist
 
 # ── Data paths ───────────────────────────────────────────────────────────────
 _DB_DIR       = Path(__file__).resolve().parents[1] / "Database"
 _POSITIONS_FILE = Path(__file__).resolve().parent / "saved_positions.json"
+_FX_FILE      = _DB_DIR / "gbpusd.parquet"
+
+# London Cocoa (LCC) settles in GBP/tonne on ICE Futures Europe; every other
+# commodity here (KC, RC, CC, SB, CT, LSU) settles in USD. Converted to USD
+# below before any return, vol, or VaR math runs — otherwise LCC's numbers
+# silently get treated as dollars everywhere they're summed with the rest.
+_GBP_COMMS = {"LCC"}
 
 def _load_positions(comm_order):
     if _POSITIONS_FILE.exists():
@@ -26,12 +34,24 @@ def _load_positions(comm_order):
 def _save_positions(positions: dict):
     _POSITIONS_FILE.write_text(json.dumps(positions))
 
+def _fx_to_usd(prices: pd.Series) -> pd.Series:
+    """Convert a GBP-denominated price series to USD using daily GBP/USD spot."""
+    fx = pd.read_parquet(_FX_FILE, columns=["Date", "GBPUSD"])
+    fx["Date"] = pd.to_datetime(fx["Date"])
+    fx = fx.set_index("Date")["GBPUSD"].sort_index()
+    rate = fx.reindex(pd.DatetimeIndex(prices.index)).ffill().bfill()
+    return prices * rate.values
+
 def _rx_load(comm: str) -> pd.DataFrame:
     """Read rollex parquet directly — no rollex_utils dependency."""
     alias = {"LRC": "RC"}
-    c = alias.get(comm.upper(), comm.upper())
+    key = comm.upper()
+    c = alias.get(key, key)
     df = pd.read_parquet(_DB_DIR / f"rollex_{c}.parquet")
     df.index.name = "Date"
+    if key in _GBP_COMMS:
+        df = df.copy()
+        df["rollex_px"] = _fx_to_usd(df["rollex_px"])
     return df
 
 # commodity code → parquet filename in VaR/Database/
@@ -56,6 +76,9 @@ def _load_front_price(comm: str) -> pd.DataFrame:
         .first()
         .rename(columns={"ice_symbol": "base_ric"})
     )
+    if comm.upper() in _GBP_COMMS:
+        active = active.copy()
+        active["settlement"] = _fx_to_usd(active["settlement"])
     return active  # DatetimeIndex → {settlement, base_ric}
 
 st.set_page_config(page_title="VaR Monitor", layout="wide", initial_sidebar_state="collapsed")
@@ -64,10 +87,36 @@ st.markdown("""<style>
   [data-testid="stHeader"]{background:transparent!important}
   .block-container{padding-top:2rem!important;padding-bottom:1.5rem;max-width:1440px}
   hr{border:none!important;border-top:1px solid #e8e8ed!important;margin:.4rem 0!important}
-  [data-testid="stRadio"] label,[data-testid="stRadio"] label p,[data-testid="stRadio"] label div{font-size:.78rem!important;color:#1d1d1f!important}
   [data-testid="stExpander"]{border:1px solid #e8e8ed!important;border-radius:8px!important;background:#fff!important}
   h1,h2,h3{color:#1d1d1f!important;font-weight:500!important}
+
+  /* Compact pill buttons for st.segmented_control (nav + all filters) */
+  [data-testid="stButtonGroup"]{gap:.3rem!important;flex-wrap:wrap!important}
+  [data-testid="stButtonGroup"] button{
+    padding:.1rem .65rem!important;
+    min-height:1.55rem!important;
+    height:auto!important;
+    border-radius:999px!important;
+    border-color:#e0e0e6!important;
+  }
+  [data-testid="stButtonGroup"] button *{
+    font-size:.74rem!important;
+    line-height:1.2!important;
+  }
+  [data-testid="stButtonGroup"] button[aria-checked="true"]{
+    background:#0a2463!important;
+    border-color:#0a2463!important;
+  }
+  [data-testid="stButtonGroup"] button[aria-checked="true"] *{
+    color:#fff!important;
+  }
 </style>""", unsafe_allow_html=True)
+
+def seg_control(label, options, default, key, **kwargs):
+    """st.segmented_control wrapper — falls back to `default` when the user
+    deselects the active pill down to None (st.radio never allowed that)."""
+    val = st.segmented_control(label, options, default=default, key=key, **kwargs)
+    return default if val is None else val
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 NAVY  = "#0a2463"
@@ -116,17 +165,30 @@ def load_all():
         rx.columns = ["Date", "Close"]
         rx["Date"] = pd.to_datetime(rx["Date"])
         rx = rx.sort_values("Date").dropna(subset=["Close"]).reset_index(drop=True)
-        full_idx = pd.bdate_range(rx["Date"].min(), rx["Date"].max())
-        rx = rx.set_index("Date").reindex(full_idx).ffill()
+        rx = rx.set_index("Date")
         rx["log_ret"] = np.log(rx["Close"] / rx["Close"].shift(1))
         for w_name, w in WINDOWS.items():
             rx[f"vol_{w_name}"] = rx["log_ret"].rolling(w).std()
+
+        # Keep true trading-day returns before padding onto a shared calendar —
+        # forward-filling first would inject a synthetic zero-return on every
+        # exchange holiday, which dilutes rolling vol and (for the MC tab)
+        # cross-commodity correlation between exchanges with different
+        # holiday calendars.
+        true_log_ret = rx["log_ret"].copy()
+
+        # Reindex to a full business-day calendar now, purely so this
+        # commodity's VaR/settlement columns can be joined and combined with
+        # others on a common date axis for the charts below.
+        full_idx = pd.bdate_range(rx.index.min(), rx.index.max())
+        rx = rx.reindex(full_idx).ffill()
 
         # ── Price for VaR: active front contract settlement ───────────────────
         front = _load_front_price(comm)
         df = rx.join(front, how="left")
         df["settlement"] = df["settlement"].ffill()
         df["base_ric"]   = df["base_ric"].ffill()
+        df["true_log_ret"] = true_log_ret.reindex(df.index)
 
         for w_name in WINDOWS:
             df[f"VaR_{w_name}"] = df["settlement"] * LOT_SIZES[comm] * df[f"vol_{w_name}"] * CONF_Z
@@ -176,15 +238,17 @@ min_d         = all_dates.min().date()
 max_d         = all_dates.max().date()
 default_start = (all_dates.max() - pd.DateOffset(years=5)).date()
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
-tab2, tab1 = st.tabs(["Portfolio VaR — Monte Carlo", "Parametric VaR"])
+# ── Nav ───────────────────────────────────────────────────────────────────────
+NAV_OPTIONS = ["Portfolio VaR — Monte Carlo", "Parametric VaR"]
+nav = seg_control("", NAV_OPTIONS, default=NAV_OPTIONS[0], key="nav_main")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — VaR Monitor
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab1:
+if nav == "Parametric VaR":
     st.markdown(
-        f"<i style='font-size:.75rem;color:#888'>Data as of {max_d.strftime('%b %d, %Y')}</i>",
+        f"<i style='font-size:.75rem;color:#888'>Data as of {max_d.strftime('%b %d, %Y')}"
+        f" · LCC (London Cocoa) converted to USD via daily GBP/USD spot</i>",
         unsafe_allow_html=True,
     )
 
@@ -203,9 +267,9 @@ with tab1:
                 value=(default_start, max_d), key="sl_main",
             )
         with c3:
-            window_label = st.radio(
-                "VaR Window", list(WINDOWS.keys()), index=1,
-                horizontal=True, key="radio_window",
+            window_label = seg_control(
+                "VaR Window", list(WINDOWS.keys()), default=list(WINDOWS.keys())[1],
+                key="radio_window",
             )
 
     var_col        = f"VaR_{window_label}"
@@ -339,24 +403,24 @@ with tab1:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — Portfolio VaR — Monte Carlo
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab2:
+if nav == "Portfolio VaR — Monte Carlo":
     st.markdown(
-        f"<i style='font-size:.75rem;color:#888'>Data as of {max_d.strftime('%b %d, %Y')}</i>",
+        f"<i style='font-size:.75rem;color:#888'>Data as of {max_d.strftime('%b %d, %Y')}"
+        f" · LCC (London Cocoa) converted to USD via daily GBP/USD spot</i>",
         unsafe_allow_html=True,
     )
 
     # ── Controls ──────────────────────────────────────────────────────────────
     cc1, cc2, cc3, cc4 = st.columns([2, 2, 2, 2])
     with cc1:
-        mc_win  = st.radio("Calibration Window", list(WINDOWS.keys()), index=1,
-                           horizontal=True, key="mc_win")
+        mc_win  = seg_control("Calibration Window", list(WINDOWS.keys()),
+                               default=list(WINDOWS.keys())[1], key="mc_win")
     with cc2:
         n_sims  = st.select_slider("Simulations",
                                    [1_000, 5_000, 10_000, 25_000, 50_000, 100_000, 500_000],
                                    value=10_000, key="mc_nsims")
     with cc3:
-        mc_conf = st.radio("Confidence", ["95%", "99%"], index=1,
-                           horizontal=True, key="mc_conf")
+        mc_conf = seg_control("Confidence", ["95%", "99%"], default="99%", key="mc_conf")
     with cc4:
         use_t  = st.toggle("Fat tails (t-dist)", value=True, key="mc_t")
         t_df_v = st.slider("Degrees of freedom", 3, 30, 6, key="mc_tdf") if use_t else None
@@ -451,7 +515,7 @@ to extreme moves. Commodity markets experience sharp dislocations more often tha
     # ── Returns matrix & covariance ───────────────────────────────────────────
     w_mc     = WINDOWS[mc_win]
     ret_mx   = pd.concat(
-        [data[c].set_index("Date")["log_ret"].rename(c) for c in comm_order], axis=1
+        [data[c].set_index("Date")["true_log_ret"].rename(c) for c in comm_order], axis=1
     ).dropna()
     recent_r = ret_mx.tail(w_mc)
     cov_mx   = recent_r.cov().values
@@ -481,8 +545,17 @@ to extreme moves. Commodity markets experience sharp dislocations more often tha
     tail_mask = sim_pnl <= cutoff
     port_cvar = float(-sim_pnl[tail_mask].mean()) if tail_mask.any() else port_var
 
+    # Individual VaRs must use the same tail assumption as the portfolio MC
+    # (z_para alone would always be normal-tailed, understating "Sum Indiv
+    # VaRs" whenever fat tails are on and overstating the apparent
+    # diversification benefit below).
+    if use_t:
+        z_indiv = abs(float(_t_dist.ppf(alpha, t_df_v))) / np.sqrt(t_df_v / (t_df_v - 2))
+    else:
+        z_indiv = z_para
+
     indiv_var = np.array([
-        abs(dollar_exp[i]) * float(data[c][f"vol_{mc_win}"].dropna().iloc[-1]) * z_para
+        abs(dollar_exp[i]) * float(data[c][f"vol_{mc_win}"].dropna().iloc[-1]) * z_indiv
         for i, c in enumerate(comm_order)
     ])
     sum_indiv   = float(indiv_var.sum())
