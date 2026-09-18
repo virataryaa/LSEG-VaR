@@ -443,13 +443,13 @@ if nav == "Portfolio VaR — Monte Carlo":
                                default=list(WINDOWS.keys())[1], key="mc_win")
     with cc2:
         n_sims  = st.select_slider("Simulations",
-                                   [1_000, 5_000, 10_000, 25_000, 50_000, 100_000, 500_000],
+                                   [1_000, 5_000, 10_000, 25_000, 50_000, 100_000, 500_000, 1_000_000],
                                    value=10_000, key="mc_nsims")
     with cc3:
         mc_conf = seg_control("Confidence", ["95%", "99%"], default="99%", key="mc_conf")
     with cc4:
         use_t  = st.toggle("Fat tails (t-dist)", value=True, key="mc_t")
-        t_df_v = st.slider("Degrees of freedom", 3, 30, 6, key="mc_tdf") if use_t else None
+        t_df_v = st.slider("Degrees of freedom", 3, 30, 30, key="mc_tdf") if use_t else None
 
     # ── Parameter guide ───────────────────────────────────────────────────────
     with st.expander("Parameter Guide", expanded=False):
@@ -460,7 +460,8 @@ Use **60D** as the standard balanced view (roughly one quarter).
 Use **120D** for a more conservative estimate that smooths over short calm periods and is less likely to understate risk.
 
 **Simulations** controls how many scenarios are generated. More paths means a more stable VaR number with less sampling noise.
-1,000 is fine for quick exploration, 10,000 is the working default, and 25,000 is recommended for any formal reporting or comparison.
+1,000 is fine for quick exploration, 10,000 is the working default, and 25,000+ is recommended for any formal reporting or comparison.
+1,000,000 is the max offered here to keep the app responsive for everyone on the desk at once.
 
 **Confidence** sets the loss threshold. At 95% the VaR is the loss exceeded on roughly 1 in 20 days. At 99% it is 1 in 100 days.
 99% is the standard for professional risk reporting.
@@ -473,9 +474,9 @@ to extreme moves. Commodity markets experience sharp dislocations more often tha
 | Degrees of Freedom | Tail behaviour | When to use |
 |---|---|---|
 | 3 to 4 | Very fat tails, frequent extreme moves | Stress testing, crisis scenarios |
-| 5 to 7 | Moderate fat tails | Standard soft commodity conditions (default 6) |
+| 5 to 7 | Moderate fat tails | Standard soft commodity conditions |
 | 10 to 15 | Mild fat tails | Calm, range-bound markets |
-| Above 30 | Converges to normal distribution | Effectively the same as turning fat tails off |
+| 30 (default here) | Converges to normal distribution | Effectively the same as turning fat tails off — lower this if you want the tails to actually matter |
 """)
 
     # ── Position input table ──────────────────────────────────────────────────
