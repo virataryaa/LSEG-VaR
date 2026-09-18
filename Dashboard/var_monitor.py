@@ -448,7 +448,7 @@ if nav == "Portfolio VaR — Monte Carlo":
     with cc3:
         mc_conf = seg_control("Confidence", ["95%", "99%"], default="99%", key="mc_conf")
     with cc4:
-        use_t  = st.toggle("Fat tails (t-dist)", value=True, key="mc_t")
+        use_t  = st.toggle("Fat tails (t-dist)", value=False, key="mc_t")
         t_df_v = st.slider("Degrees of freedom", 3, 30, 30, key="mc_tdf") if use_t else None
 
     # ── Parameter guide ───────────────────────────────────────────────────────
@@ -467,7 +467,7 @@ Use **120D** for a more conservative estimate that smooths over short calm perio
 99% is the standard for professional risk reporting.
 
 **Fat Tails (t-dist)** switches the simulation from a normal distribution to a Student-t distribution, which assigns higher probability
-to extreme moves. Commodity markets experience sharp dislocations more often than normal would predict, so this is recommended on by default.
+to extreme moves. Commodity markets experience sharp dislocations more often than normal would predict, so turn this on if you want the tails to reflect that. Off by default.
 
 **Degrees of Freedom** controls how fat the tails are. Lower means more extreme moves in the simulation.
 
